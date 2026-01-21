@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vision Assistant  Multilingual</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #007bff, #00b4d8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      color: #fff;
+    }
+    #container {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+      padding: 25px;
+      width: 90%;
+      max-width: 480px;
+      text-align: center;
+    }
+    video {
+      width: 100%;
+      border-radius: 12px;
+      border: 3px solid rgba(255, 255, 255, 0.6);
+    }
+    button {
+      font-size: 1.1rem;
+      padding: 12px;
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      margin-top: 12px;
+      background: #fff;
+      color: #007bff;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #007bff;
+      color: #fff;
+    }
+    #result {
+      margin-top: 15px;
+      padding: 10px;
+      background: rgba(0,0,0,0.4);
+      border-radius: 8px;
+    }
+
+    .lang-buttons {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 15px;
+    }
+  </style>
+</head>
+
+<body>
+<div id="container">
+  <h2>Vision Assistant For Blind People</h2>
+
+  <div class="lang-buttons">
+    <button onclick="setLanguage('hi')">🇮🇳 हिंदी</button>
+    <button onclick="setLanguage('pa')">🅿️ ਪੰਜਾਬੀ</button>
+    <button onclick="setLanguage('bn')">🇧🇩 বাংলা</button>
+    <button onclick="setLanguage('ta')">🇹🇳 தமிழ்</button>
+    <button onclick="setLanguage('te')">🇮🇳 తెలుగు</button>
+    <button onclick="setLanguage('mr')">🇮🇳 मराठी</button>
+    <button onclick="setLanguage('ur')">🇵🇰 اُردُو</button>
+    <button onclick="setLanguage('en')">🇬🇧 English</button>
+  </div>
+
+  <video id="video" autoplay playsinline></video>
+
+
+  <button onclick="startCamera()">▶️ Start Camera</button>
+  <button onclick="stopCamera()">⏹️ Stop Camera</button>
+  <button onclick="analyzeScene()">🔍 Analyze Scene</button>
+  <button onclick="analyzeCurrency()">💵 Detect Currency</button>
+
+  <button id="listenBtn">🎤 Start Listening</button>
+  <button id="captureBtn">📷 Analyze Scene</button>
+
+  <p id="result">Waiting...</p>
+</div>
+
+<script>
+
+const GEMINI_API_KEY = "AIzaSyDaGJKFBwWRYelqTD9d7R2HusVRTO-ihG8";
+const GOOGLE_TRANSLATE_KEY = "AIzaSyCEEXbvn7wmT6RAGuLaH7or_t5wc4Kdf8I";
+
+
+let userLanguage = "en";
+let currentStream = null;
+
+
+function setLanguage(lang) {
+  userLanguage = lang;
+  speak("Language changed");
+}
+
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const recognition = SpeechRecognition ? new SpeechRecognition() : null;
+
+if (recognition) {
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = async (event) => {
+        const speech = event.results[event.results.length - 1][0].transcript.trim();
+        document.getElementById("result").textContent = "Heard: " + speech;
+
+        const intentData = await detectIntentGemini(speech);
+        userLanguage = intentData.language || userLanguage;
+
+        runIntent(intentData.intent);
+    };
+}
+
+
+async function detectIntentGemini(text) {
+    const prompt = `
+Return ONLY CLEAN JSON. NO markdown. NO backticks. NO explanation.
+VALID FORMAT:
+{"intent":"...", "language":"..."}
+INTENTS:
+- START_CAMERA
+- STOP_CAMERA
+- ANALYZE_SCENE
+- DETECT_CURRENCY
+- UNKNOWN
+Examples:
+"oyee mujhe dikha saamne kya h" => {"intent":"ANALYZE_SCENE","language":"hi"}
+"oyee kitna paisa h" => {"intent":"DET​ECT_CURRENCY","language":"hi"}
+"camera band kar" => {"intent":"STOP_CAMERA","language":"hi"}
+"camera chalu kar" => {"intent":"START_CAMERA","language":"hi"}
+User said: "${text}"
+Return JSON only.
+`;
+
+    try {
+        const response = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }]
+            })
+          }
+        );
+
+        const data = await response.json();
+        
+       
+        let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        
+        raw = raw.replace(/```json/gi, "")
+                 .replace(/```/g, "")
+                 .trim();
+
+       
+        return JSON.parse(raw);
+
+    } catch (err) {
+        console.error("Gemini error:", err);
+        return { intent: "UNKNOWN", language: "en" };
+    }
+}
+
+
+
+async function startCamera() {
+  if (currentStream) return;
+  currentStream = await navigator.mediaDevices.getUserMedia({ video: true });
+  document.getElementById("video").srcObject = currentStream;
+  speak("Camera started");
+}
+
+function stopCamera() {
+  if (!currentStream) return;
+  currentStream.getTracks().forEach(t => t.stop());
+  currentStream = null;
+  speak("Camera stopped");
+}
+
+
+async function translateText(text, targetLang) {
+  const url = `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_KEY}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    body: JSON.stringify({ q: text, target: targetLang }),
+    headers: { "Content-Type": "application/json" }
+  });
+  const data = await res.json();
+  return data.data.translations[0].translatedText;
+}
+
+
+async function speak(text) {
+  const translated = await translateText(text, userLanguage);
+  const utter = new SpeechSynthesisUtterance(translated);
+  utter.lang = userLanguage;
+  speechSynthesis.speak(utter);
+  document.getElementById("result").textContent = translated;
+}
+
+
+async function analyzeScene() {
+  if (!currentStream) return speak("Camera is off.");
+
+  speak("Analyzing scene.");
+
+  const canvas = document.createElement("canvas");
+  const video = document.getElementById("video");
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
+
+  canvas.toBlob(async (blob) => {
+    const form = new FormData();
+    form.append("image", blob);
+
+    const res = await fetch("http://127.0.0.1:5000/analyze", {
+      method: "POST",
+      body: form
+    });
+
+    const data = await res.json();
+    speak(`Scene: ${data.scene}. Objects: ${data.objects}. Text: ${data.text}`);
+  });
+}
+
+
+async function analyzeCurrency() {
+  if (!currentStream) return speak("Camera is off.");
+
+  speak("Detecting currency.");
+
+  const video = document.getElementById("video");
+
+  
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+
+
+  const base64Image = canvas.toDataURL("image/jpeg").split(",")[1];
+
+  const prompt = `
+You are an Indian currency detection assistant.
+Look at the image and return ONLY CLEAN JSON without explanation.
+FORMAT:
+{"currency":"₹50","confidence":0.92}
+Rules:
+- currency must be like: ₹10, ₹20, ₹50, ₹100, ₹200, ₹500, ₹2000
+- give confidence between 0.75-0.85 if found
+- If unclear, return {"currency":"UNKNOWN","confidence":0}
+`;
+
+
+  const response = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          { parts: [{ text: prompt }] },
+          { parts: [{ inline_data: { mime_type: "image/jpeg", data: base64Image } }] }
+        ]
+      })
+    }
+  );
+
+  const data = await response.json();
+  let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+  raw = raw.replace(/```json/gi, "")
+           .replace(/```/g, "")
+           .trim();
+
+  let result;
+  try {
+    result = JSON.parse(raw);
+  } catch {
+    return speak("Could not detect currency.");
+  }
+
+  speak(`Currency is ${result.currency}, confidence is ${Math.round(result.confidence * 100)} percent.`);
+}
+
+
+function runIntent(intent) {
+  switch (intent) {
+    case "START_CAMERA": startCamera(); break;
+    case "STOP_CAMERA": stopCamera(); break;
+    case "ANALYZE_SCENE": analyzeScene(); break;
+    case "DETECT_CURRENCY": analyzeCurrency(); break;
+    default: speak("I did not understand.");
+  }
+}
+
+
+document.getElementById("listenBtn").onclick = () => {
+  recognition.start();
+  speak("Listening activated.");
+};
+
+document.getElementById("captureBtn").onclick = analyzeScene;
+
+</script>
+</body>
+</html>
